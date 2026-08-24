@@ -1,0 +1,9 @@
+[build]
+# For local/desktop: uncomment to force host SIMD
+# rustflags = ["-C", "target-cpu=native"]
+
+[target.aarch64-linux-android]
+linker = "aarch64-linux-android30-clang"
+
+[target.aarch64-apple-ios]
+# Requires Xcode toolchain; no linker override needed on macOS

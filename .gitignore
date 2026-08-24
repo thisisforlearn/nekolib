@@ -1,0 +1,8 @@
+*.bin
+.DS_Store
+/my_db
+/nekodata
+nekodata/
+/nekolib.json
+/target
+/wallet.json

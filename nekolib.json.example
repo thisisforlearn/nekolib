@@ -1,0 +1,13 @@
+{
+  "listen_addr": "0.0.0.0:9333",
+  "bootstrap_peers": [
+    "neko-seed.duckdns.org:9333",
+    "100.64.0.5:9333"
+  ],
+  "node_name": "neko-node-1",
+  "data_dir": "./nekodata",
+  "genesis_difficulty": 3,
+  "pruning": true,
+  "tailscale_fallback": true,
+  "max_peers": 32
+}
