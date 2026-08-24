@@ -67,7 +67,14 @@ function Find-Msys {
     "$env:MSYS2_PATH\usr\bin\bash.exe",
     "$HOME\msys64\usr\bin\bash.exe"
   )
-  foreach($p in $candidates){ if(Test-Path $p){ return (Split-Path (Split-Path $p -Parent) -Parent) } }
+  foreach($p in $candidates){
+    if(Test-Path $p){
+      # usr\bin\bash.exe → 3 levels up to root (C:\msys64 or C:\Program Files\Git)
+      if($p -match "usr\\bin\\bash\.exe$"){ return (Split-Path (Split-Path (Split-Path $p -Parent) -Parent) -Parent) }
+      # bin\bash.exe → 2 levels up
+      return (Split-Path (Split-Path $p -Parent) -Parent)
+    }
+  }
   # where.exe bash — skip WindowsApps stub
   try {
     $all = (where.exe bash 2>$null)
@@ -191,14 +198,39 @@ if(-not $cargoPath){
 }
 
 # ensure cargo on PATH for this session (honor any drive)
-$env:Path += ";$HOME\.cargo\bin"
+$env:Path += ";$HOME\.cargo\bin;C:\Users\$env:USERNAME\.cargo\bin;D:\Users\$env:USERNAME\.cargo\bin;C:\.cargo\bin"
 $cargoPath = Find-Cargo
 if(-not $cargoPath){
   Write-Err "cargo still not found after install. Close and reopen PowerShell, then re-run. If MSYS in C:\ but you are on D:\, we already reuse C:\msys64 — no re-download."
   Write-Host "Or run via WSL: wsl bash -c 'curl -fsSL https://raw.githubusercontent.com/thisisforlearn/nekolib/main/install.sh | bash'" -ForegroundColor DarkGray
   # don't crash, just warn
 } else {
-  try { $ver = & cargo --version 2>&1 | Out-String; Write-Ok "Rust $ver".Trim() } catch {}
+  # FIX: rustup installed but no default toolchain (common for fresh install) — auto-fix, no typing
+  try {
+    $verOut = & cargo --version 2>&1 | Out-String
+    if($LASTEXITCODE -ne 0 -and $verOut -match "rustup could not choose"){
+      Write-Warn "rustup no default toolchain — fixing automatically..."
+      Write-Info "Running: rustup default stable (one-time, ~1 min)"
+      & rustup default stable 2>&1 | Write-Host -ForegroundColor DarkGray
+      # also ensure stable installed
+      & rustup toolchain install stable 2>&1 | Write-Host -ForegroundColor DarkGray | Out-Null
+      $verOut = & cargo --version 2>&1 | Out-String
+    }
+    if($LASTEXITCODE -eq 0){
+      Write-Ok "Rust $($verOut.Trim())"
+    } else {
+      Write-Warn "cargo check: $verOut"
+    }
+  } catch {
+    Write-Warn "cargo version check non-fatal: $_"
+  }
+  # Also check linker (for average user with no VS Build Tools) — auto-fallback to gnu if needed
+  try {
+    $linkCheck = Get-Command link.exe -ErrorAction SilentlyContinue
+    if(-not $linkCheck){
+      Write-Info "No MSVC linker found — will try gnu toolchain (no Visual Studio needed) if build fails"
+    }
+  } catch {}
 }
 
 Show-Bar 2 4 "deps done (no crash)..."
