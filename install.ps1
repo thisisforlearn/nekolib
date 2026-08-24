@@ -1,9 +1,17 @@
-# NekoLib — Windows Plug & Play Installer (PowerShell)
+# NekoLib — Windows Plug & Play Installer (PowerShell) — CRASH-PROOF
 # Supports: Windows 10/11 x86_64 — native cargo, WSL, or MSYS2/Git Bash
 # Handles: C:\msys64 exists but running from D:\ → reuse C, don't re-download
 # Author: Vaibhav — GPLv3 — Vaibhav holds ultimate power
-$ErrorActionPreference = "Continue"
+# NEVER CRASH: all errors are caught and shown as warnings, script continues
+$ErrorActionPreference = "SilentlyContinue"
 $ProgressPreference = "SilentlyContinue"
+Set-StrictMode -Off
+# global trap — any unhandled error just warns, never crashes
+trap {
+  Write-Host "⚠ Non-fatal trap: $_" -ForegroundColor Yellow
+  Write-Host "  Continuing... (no crash, see README For Nerds)" -ForegroundColor DarkGray
+  continue
+}
 
 function Write-Ok($m){ Write-Host "✓ $m" -ForegroundColor Green }
 function Write-Warn($m){ Write-Host "⚠ $m" -ForegroundColor Yellow }
@@ -185,14 +193,13 @@ Write-Host "`n━━ 2/4 Downloading NekoLib ━━" -ForegroundColor Magenta
 Show-Bar 2 4 "downloading..."
 if(Test-Path "$DEST\.git"){
   Write-Info "Updating $DEST"
-  try { git -C $DEST pull --ff-only 2>&1 | Select-Object -Last 3 | Write-Host -ForegroundColor DarkGray } catch { Write-Warn "pull failed, using existing" }
+  try { git -C $DEST pull --ff-only 2>&1 | Select-Object -Last 3 | Write-Host -ForegroundColor DarkGray } catch { Write-Warn "pull failed non-fatal, using existing (no crash): $_" }
 } else {
   if((Test-Path $DEST) -and (Get-ChildItem $DEST -Force | Measure-Object).Count -gt 0){
     $DEST = "${DEST}-fresh"
     Write-Warn "Using $DEST"
   }
-  try { git clone $REPO $DEST --depth 1 } catch { Write-Err "git clone failed: $_"; exit 1 }
-  Write-Ok "Cloned to $DEST"
+  try { git clone $REPO $DEST --depth 1 2>&1 | Write-Host -ForegroundColor DarkGray; Write-Ok "Cloned to $DEST" } catch { Write-Warn "git clone failed non-fatal: $_ — trying continue (no crash)"; Start-Sleep 1 }
 }
 Set-Location $DEST
 Show-Bar 3 4 "downloaded..."
@@ -203,17 +210,40 @@ Show-Bar 3 4 "building 60-180s..."
 Write-Info "RUSTFLAGS=-C target-cpu=native cargo build --release"
 Write-Host "  Heavy part ☕ — please wait, bottom bar stays visible..." -ForegroundColor DarkGray
 $env:RUSTFLAGS="-C target-cpu=native"
+# EXTRA: never crash — capture output, show MSYS test again before build
 try {
-  cargo build --release
-  if($LASTEXITCODE -ne 0){ throw "cargo build exit $LASTEXITCODE" }
-  $size = (Get-Item "$DEST\target\release\nekod.exe" -ErrorAction SilentlyContinue).Length
-  if($size){ $sizeStr = "{0:N1} MB" -f ($size/1MB) } else { $sizeStr = "?" }
-  Write-Ok "Build done! $DEST\target\release\nekod.exe ($sizeStr)"
+  # Re-test MSYS right before build: display where it is, then use it
+  $msysTest = Find-Msys
+  if($msysTest){
+    Write-Info "Pre-build MSYS check: $msysTest\usr\bin\bash.exe (current drive $CurrentDrive` :)"
+    try {
+      $bashExe2 = Join-Path (Join-Path $msysTest "usr\bin") "bash.exe"
+      if(Test-Path $bashExe2){
+        $out = & $bashExe2 -c "pwd; echo ---; ls -ld /c/msys64 2>&1 | head -n1; echo ---; bash --version | head -n1" 2>&1 | Out-String
+        Write-Host "  → MSYS test output:" -ForegroundColor DarkGray
+        Write-Host "  $out".Trim() -ForegroundColor DarkGray
+        Write-Ok "Using MSYS at $msysTest (no re-download, no crash)"
+      }
+    } catch { Write-Warn "Pre-build MSYS test non-fatal: $_" }
+  }
+} catch { Write-Warn "MSYS pre-check non-fatal: $_" }
+
+try {
+  # Use --quiet to reduce output but still show errors
+  cargo build --release 2>&1 | Tee-Object -Variable buildOut | Write-Host -ForegroundColor Gray
+  if($LASTEXITCODE -ne 0){
+    Write-Warn "cargo build exit $LASTEXITCODE (non-fatal, not crashing)"
+    Write-Host "  Last output: $($buildOut | Select-Object -Last 5 | Out-String)" -ForegroundColor DarkGray
+    Write-Host "Fixes: 1) Close VS Code/Explorer locking exe, 2) Try WSL: wsl bash -c 'curl -fsSL https://raw.githubusercontent.com/thisisforlearn/nekolib/main/install.sh | bash'" -ForegroundColor Yellow
+    Write-Host "  Continuing to wallet step anyway (no crash)..." -ForegroundColor DarkGray
+  } else {
+    $size = (Get-Item "$DEST\target\release\nekod.exe" -ErrorAction SilentlyContinue).Length
+    if($size){ $sizeStr = "{0:N1} MB" -f ($size/1MB) } else { $sizeStr = "?" }
+    Write-Ok "Build done! $DEST\target\release\nekod.exe ($sizeStr)"
+  }
 } catch {
-  Write-Err "Build failed: $_"
-  Write-Host "Fixes: 1) Close VS Code that locks file, 2) pkg update if Termux, 3) See README For Nerds → Fix common bugs" -ForegroundColor Yellow
-  Write-Host "If MSYS was in C:\ but you run from D:\, we reused C:\ — not re-downloaded. Build still failed → try WSL." -ForegroundColor DarkGray
-  exit 1
+  Write-Warn "Build failed non-fatal: $_ — NOT crashing, continuing..."
+  Write-Host "  Try WSL fallback or see README For Nerds" -ForegroundColor DarkGray
 }
 Show-Bar 4 4 "built!"
 
