@@ -92,15 +92,31 @@ Show-Bar 0 4 "starting..."
 
 if(-not (Ask "Install NekoLib now?")){ Write-Host "Cancelled. Re-run: irm https://raw.githubusercontent.com/thisisforlearn/nekolib/main/install.ps1 | iex" -ForegroundColor Yellow; exit 0 }
 
-# --- MSYS reuse check ---
+# --- MSYS reuse check + TEST (displays where it is, then uses) ---
 $msys = Find-Msys
 if($msys){
   Write-Ok "Found existing MSYS2 at $msys — reusing (not re-downloading)"
   # ensure bash is on PATH for cargo build that may need it
   $msysBin = Join-Path $msys "usr\bin"
   if($env:Path -notlike "*$msysBin*"){ $env:Path += ";$msysBin" }
+  # TEST: run msys bash and display where it is, then use it
+  try {
+    $bashExe = Join-Path $msysBin "bash.exe"
+    $testDrive = (Split-Path $msys -Qualifier)  # C: or D:
+    Write-Info "MSYS location test: $bashExe on drive $testDrive (current drive $CurrentDrive` :)"
+    if(Test-Path $bashExe){
+      $ver = & $bashExe -c "echo MSYS bash at `$(pwd)` on `uname -s` `uname -m` && bash --version | head -n1" 2>&1 | Out-String
+      Write-Host "  → $ver".Trim() -ForegroundColor DarkGray
+      Write-Ok "MSYS test OK — using $bashExe (no re-download needed even though you run from $CurrentDrive`:)"
+    } else {
+      Write-Warn "MSYS bash.exe not found at $bashExe — will use native cargo"
+    }
+  } catch {
+    Write-Warn "MSYS test failed (non-fatal): $_ — continuing with native cargo (no crash)"
+  }
 } else {
   Write-Info "No existing MSYS2 found — will use native Windows cargo (no MSYS needed). If build needs msys, install from https://www.msys2.org"
+  Write-Info "Tip: MSYS not required for nekolib (pure Rust, no C). Native cargo works fine."
 }
 
 Show-Bar 1 4 "deps..."
@@ -162,7 +178,7 @@ if(-not $cargoPath){
   try { $ver = & cargo --version 2>&1 | Out-String; Write-Ok "Rust $ver".Trim() } catch {}
 }
 
-Show-Bar 2 4 "deps done..."
+Show-Bar 2 4 "deps done (no crash)..."
 
 # --- download ---
 Write-Host "`n━━ 2/4 Downloading NekoLib ━━" -ForegroundColor Magenta
