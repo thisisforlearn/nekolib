@@ -206,23 +206,33 @@ if(-not $cargoPath){
   # don't crash, just warn
 } else {
   # FIX: rustup installed but no default toolchain (common for fresh install) — auto-fix, no typing
+  # Use direct invocation without Out-String pipe to preserve LASTEXITCODE
   try {
-    $verOut = & cargo --version 2>&1 | Out-String
-    if($LASTEXITCODE -ne 0 -and $verOut -match "rustup could not choose"){
+    $verOut = & cargo --version 2>&1
+    $verStr = ($verOut | Out-String)
+    $code = $LASTEXITCODE
+    if($code -ne 0 -and $verStr -match "rustup could not choose"){
       Write-Warn "rustup no default toolchain — fixing automatically..."
       Write-Info "Running: rustup default stable (one-time, ~1 min)"
       & rustup default stable 2>&1 | Write-Host -ForegroundColor DarkGray
-      # also ensure stable installed
       & rustup toolchain install stable 2>&1 | Write-Host -ForegroundColor DarkGray | Out-Null
-      $verOut = & cargo --version 2>&1 | Out-String
+      $verOut = & cargo --version 2>&1
+      $verStr = ($verOut | Out-String)
+      $code = $LASTEXITCODE
     }
-    if($LASTEXITCODE -eq 0){
-      Write-Ok "Rust $($verOut.Trim())"
+    if($code -eq 0){
+      Write-Ok "Rust $($verStr.Trim())"
     } else {
-      Write-Warn "cargo check: $verOut"
+      Write-Warn "cargo check: $verStr (code $code) — will auto-fix on build retry"
+      # still try to set default now for build
+      if($verStr -match "rustup could not choose"){
+        & rustup default stable 2>&1 | Out-Null
+      }
     }
   } catch {
     Write-Warn "cargo version check non-fatal: $_"
+    # force default
+    try { & rustup default stable 2>&1 | Out-Null } catch {}
   }
   # Also check linker (for average user with no VS Build Tools) — auto-fallback to gnu if needed
   try {

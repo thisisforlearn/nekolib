@@ -2,8 +2,11 @@
 # For local/desktop: uncomment to force host SIMD
 # rustflags = ["-C", "target-cpu=native"]
 
-[target.aarch64-linux-android]
-linker = "aarch64-linux-android30-clang"
+# For Termux native build (aarch64-linux-android host) use system clang — no NDK needed
+# Cross-compile to Android from Linux/macOS still works via cargo-ndk (it sets linker env)
+# So we intentionally leave no forced linker here. Uncomment below only if you have NDK + cargo-ndk:
+# [target.aarch64-linux-android]
+# linker = "aarch64-linux-android30-clang"
 
 [target.aarch64-apple-ios]
 # Requires Xcode toolchain; no linker override needed on macOS
