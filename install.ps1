@@ -55,28 +55,43 @@ function Ask($msg,$def="Y"){
 }
 
 function Find-Msys {
+  # Priority: real MSYS2 and Git Bash, NEVER WindowsApps stub
   $candidates = @(
     "C:\msys64\usr\bin\bash.exe",
     "D:\msys64\usr\bin\bash.exe",
     "C:\tools\msys64\usr\bin\bash.exe",
     "D:\tools\msys64\usr\bin\bash.exe",
+    "C:\Program Files\Git\usr\bin\bash.exe",
+    "D:\Program Files\Git\usr\bin\bash.exe",
+    "C:\Program Files\Git\bin\bash.exe",
     "$env:MSYS2_PATH\usr\bin\bash.exe",
     "$HOME\msys64\usr\bin\bash.exe"
   )
   foreach($p in $candidates){ if(Test-Path $p){ return (Split-Path (Split-Path $p -Parent) -Parent) } }
-  # where.exe bash
+  # where.exe bash — skip WindowsApps stub
   try {
-    $w = (where.exe bash 2>$null | Select-Object -First 1)
-    if($w -and (Test-Path $w)){ return (Split-Path (Split-Path $w -Parent) -Parent) }
+    $all = (where.exe bash 2>$null)
+    foreach($w in $all){
+      if(-not $w) { continue }
+      if($w -match "WindowsApps"){ continue }
+      if(Test-Path $w){
+        # w is ...\usr\bin\bash.exe or ...\bin\bash.exe
+        $d = Split-Path $w -Parent
+        if($d -match "usr\\bin$"){ return (Split-Path (Split-Path $d -Parent) -Parent) } # msys64
+        if($d -match "Git\\usr\\bin$"){ return (Split-Path (Split-Path $d -Parent) -Parent) } # Git
+        if($d -match "Git\\bin$"){ return (Split-Path $d -Parent) }
+        return (Split-Path $d -Parent)
+      }
+    }
   } catch {}
-  # Get-Command bash
+  # Get-Command bash — also skip WindowsApps
   try {
     $c = Get-Command bash -ErrorAction SilentlyContinue
-    if($c -and $c.Source -and (Test-Path $c.Source)){ 
+    if($c -and $c.Source -and (Test-Path $c.Source) -and ($c.Source -notmatch "WindowsApps")){
       $d = Split-Path $c.Source -Parent
-      # d is usr\bin, parent is msys64
+      if($d -match "Git\\usr\\bin"){ return "C:\Program Files\Git" }
       if($d -match "msys"){ return (Split-Path $d -Parent) }
-      return $d
+      return (Split-Path $d -Parent)
     }
   } catch {}
   return $null
@@ -229,13 +244,34 @@ try {
 } catch { Write-Warn "MSYS pre-check non-fatal: $_" }
 
 try {
-  # Use --quiet to reduce output but still show errors
-  cargo build --release 2>&1 | Tee-Object -Variable buildOut | Write-Host -ForegroundColor Gray
-  if($LASTEXITCODE -ne 0){
-    Write-Warn "cargo build exit $LASTEXITCODE (non-fatal, not crashing)"
-    Write-Host "  Last output: $($buildOut | Select-Object -Last 5 | Out-String)" -ForegroundColor DarkGray
-    Write-Host "Fixes: 1) Close VS Code/Explorer locking exe, 2) Try WSL: wsl bash -c 'curl -fsSL https://raw.githubusercontent.com/thisisforlearn/nekolib/main/install.sh | bash'" -ForegroundColor Yellow
-    Write-Host "  Continuing to wallet step anyway (no crash)..." -ForegroundColor DarkGray
+  Write-Info "Running: cargo build --release (this shows real error if fails, no crash)"
+  # Capture all output to variable AND display it, so user sees why it failed
+  $buildLog = Join-Path $env:TEMP "nekolib_build.log"
+  # Run cargo and tee to log + host
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = "cargo"
+  $psi.Arguments = "build --release"
+  $psi.WorkingDirectory = $DEST
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.EnvironmentVariables["RUSTFLAGS"] = "-C target-cpu=native"
+  $proc = [System.Diagnostics.Process]::Start($psi)
+  $out = $proc.StandardOutput.ReadToEnd()
+  $err = $proc.StandardError.ReadToEnd()
+  $proc.WaitForExit()
+  $full = "$out`n$err"
+  $full | Out-File -FilePath $buildLog -Encoding utf8
+  # display last 30 lines so user sees error
+  $full -split "`n" | Select-Object -Last 40 | Write-Host -ForegroundColor Gray
+  if($proc.ExitCode -ne 0){
+    Write-Warn "cargo build exit $($proc.ExitCode) (non-fatal, NOT crashing)"
+    Write-Host "  Full log saved to $buildLog" -ForegroundColor DarkGray
+    Write-Host "  Top error hint:" -ForegroundColor Yellow
+    $hint = $full -split "`n" | Where-Object { $_ -match "error|failed|not found|linker|permission" } | Select-Object -Last 5
+    $hint | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
+    Write-Host "Fixes: 1) Close VS Code/Explorer that locks nekod.exe, 2) Install Visual Studio Build Tools (https://visualstudio.microsoft.com/visual-cpp-build-tools/), 3) Or use WSL: wsl bash -c 'curl -fsSL https://raw.githubusercontent.com/thisisforlearn/nekolib/main/install.sh | bash'" -ForegroundColor Yellow
+    Write-Host "  Continuing to wallet step anyway (no crash) — you can retry build later: cd $DEST; cargo build --release" -ForegroundColor DarkGray
   } else {
     $size = (Get-Item "$DEST\target\release\nekod.exe" -ErrorAction SilentlyContinue).Length
     if($size){ $sizeStr = "{0:N1} MB" -f ($size/1MB) } else { $sizeStr = "?" }
@@ -243,7 +279,8 @@ try {
   }
 } catch {
   Write-Warn "Build failed non-fatal: $_ — NOT crashing, continuing..."
-  Write-Host "  Try WSL fallback or see README For Nerds" -ForegroundColor DarkGray
+  Write-Host "  Full exception: $($_.Exception.Message)" -ForegroundColor DarkGray
+  Write-Host "  Try WSL fallback or see README For Nerds → Fix common bugs" -ForegroundColor DarkGray
 }
 Show-Bar 4 4 "built!"
 
